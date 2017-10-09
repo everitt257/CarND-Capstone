@@ -6,6 +6,7 @@ from styx_msgs.msg import Lane, Waypoint
 from std_msgs.msg import Int32
 import math
 from copy import deepcopy
+from tf.transformations import euler_from_quaternion
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
@@ -31,6 +32,7 @@ RefSpeed = 6.2
 
 class WaypointUpdater(object):
     def __init__(self):
+        """setup subscriber and publisher"""
         rospy.init_node('waypoint_updater')
 
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
@@ -53,7 +55,7 @@ class WaypointUpdater(object):
         # rospy.spin()
 
     def loop(self):
-        # published final wayponts
+        """publish final waypoints"""
 
         rate = rospy.Rate(10)
 
@@ -63,7 +65,7 @@ class WaypointUpdater(object):
             if None in check_skip:
                 continue
             # get index closest to current position
-            self.last_wp = self.nearest_wp(self.last_pos.position, self.base_waypoints)+1
+            self.last_wp = self.nearest_wp(self.last_pos, self.base_waypoints)
             # fetch next LOOKAHEAD number of waypoints
             ahead = min(len(self.base_waypoints),self.last_wp+LOOKAHEAD_WPS)
             # deep copy a set of lookahead pts
@@ -115,7 +117,7 @@ class WaypointUpdater(object):
             self.final_waypoints_pub.publish(message_to_sent)
 
     def pose_cb(self, msg):
-        # TODO: Implement
+        """return last position"""
         self.last_pos = msg.pose
         self.frame_id = msg.header.frame_id
 
@@ -127,19 +129,41 @@ class WaypointUpdater(object):
         nearest_index = -1;
         for index, waypoint in enumerate(waypoints):
             waypoint_pos = waypoint.pose.pose.position
-            distance = dl(last_position, waypoint_pos)
+            distance = dl(last_position.position, waypoint_pos)
             if distance < nearest_distance:
                 nearest_index = index
                 nearest_distance = distance
-        return nearest_index
+        return self.nearest_wp_helper(last_position, waypoints, nearest_index)
+        # return nearest_index
+
+    def nearest_wp_helper(self, last_position, waypoints, nearest_index):
+        """determine if the nearest_index is behind or ahead, if behind just plus 1"""
+        roll, pitch, yaw = euler_from_quaternion([last_position.orientation.x,
+                                                  last_position.orientation.y,
+                                                  last_position.orientation.z,
+                                                  last_position.orientation.w])
+        # coordinate transformation
+        cur_x = last_position.position.x
+        cur_y = last_position.position.y
+        # translational transform
+        nearest_waypoint = waypoints[nearest_index]
+        tempx = nearest_waypoint.pose.pose.position.x - cur_x
+        tempy = nearest_waypoint.pose.pose.position.y - cur_y
+        # rotational transform
+        finalx = tempx * math.cos(yaw) + tempy * math.sin(yaw)
+        #finaly = -tempx * math.sin(yaw) + tempy * math.cos(yaw)
+        # decide if it's ok to add 1
+        if finalx > 0:
+            return nearest_index
+        else:
+            return nearest_index + 1
 
     def waypoints_cb(self, waypoints):
-        # TODO: Implement
-        """Store the map data"""
+        """Stores the map data"""
         self.base_waypoints = waypoints.waypoints
 
     def traffic_cb(self, msg):
-        # TODO: Callback for /traffic_waypoint message. Implement
+        """Callback for /traffic_waypoint message"""
         self.traffic_light_index = msg.data
         self.traffic_light_time = rospy.get_time()
 
